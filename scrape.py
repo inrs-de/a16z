@@ -337,7 +337,7 @@ def _build_email_html(articles: list[dict], date_str: str, time_str: str) -> str
     padding:44px 32px 36px;">
   <table width="100%" cellpadding="0" cellspacing="0" border="0">
     <tr><td align="center"
-      style="color:#94A3B8;font-size:30px;padding-top:8px;
+      style="color:#F8FAFC;font-size:28px;padding-top:8px;
         letter-spacing:1.5px;font-family:Arial,sans-serif;">
       🧬 Daily 36Kr AI</td></tr>
     <tr><td align="center" style="padding-top:18px;">
