@@ -301,7 +301,8 @@ def _build_email_html(articles: list[dict], date_str: str, time_str: str) -> str
         </td>
         <td style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
           <a href="{u}" target="_blank"
-             style="color:#1E293B;text-decoration:none;font-size:15px;font-weight:600;line-height:1.55;display:block;">
+             style="color:#1E293B;text-decoration:none;font-size:15px;font-weight:600;
+                    line-height:1.55;display:block;">
             {t}</a>
           <div style="margin-top:8px;">
             <span style="display:inline-block;background-color:#EEF2FF;
@@ -316,29 +317,40 @@ def _build_email_html(articles: list[dict], date_str: str, time_str: str) -> str
 </td></tr>"""
 
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>36Kr AI Update</title></head>
 <body style="margin:0;padding:0;background-color:#F1F5F9;
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
 
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F1F5F9;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0"
+  style="background-color:#F1F5F9;">
 <tr><td align="center" style="padding:32px 12px;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0"
-  style="max-width:640px;background-color:#ffffff;border-radius:16px;overflow:hidden;
-    box-shadow:0 4px 30px rgba(0,0,0,0.08);">
+  style="max-width:640px;background-color:#ffffff;border-radius:16px;
+    overflow:hidden;box-shadow:0 4px 30px rgba(0,0,0,0.08);">
 
 <!-- ═══ HEADER ═══ -->
 <tr><td align="center"
   style="background-color:#0F172A;
     background:linear-gradient(135deg,#0F172A 0%,#1E293B 45%,#334155 100%);
     padding:44px 32px 36px;">
-   <div style="color:#F8FAFC !important;font-size:28px;font-weight:700;margin-top:14px;
-    letter-spacing:-0.3px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
-    🧬 Daily 36Kr AI</div>
-  <div style="color:#94A3B8;font-size:14px;margin-top:8px;letter-spacing:1.5px;
-    font-family:Arial,sans-serif;">Have Fun ~</div>
-  <div style="width:52px;height:3px;border-radius:2px;margin:18px auto 0;
-    background-color:#6366F1;background:linear-gradient(90deg,#6366F1,#A78BFA);"></div>
+  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr><td align="center"
+      style="color:#F8FAFC;font-size:28px;font-weight:700;
+        letter-spacing:-0.3px;padding-top:14px;
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+      🧬 Daily 36Kr AI</td></tr>
+    <tr><td align="center"
+      style="color:#94A3B8;font-size:14px;padding-top:8px;
+        letter-spacing:1.5px;font-family:Arial,sans-serif;">
+      Have Fun ~</td></tr>
+    <tr><td align="center" style="padding-top:18px;">
+      <div style="width:52px;height:3px;border-radius:2px;margin:0 auto;
+        background-color:#6366F1;
+        background:linear-gradient(90deg,#6366F1,#A78BFA);"></div>
+    </td></tr>
+  </table>
 </td></tr>
 
 <!-- ═══ BODY ═══ -->
@@ -353,9 +365,12 @@ def _build_email_html(articles: list[dict], date_str: str, time_str: str) -> str
   style="background-color:#0F172A;
     background:linear-gradient(135deg,#0F172A 0%,#1E293B 55%,#0F172A 100%);
     padding:30px 32px;">
-  <div style="color:#64748B;font-size:12px;line-height:1.6;
-    font-family:Arial,sans-serif;">
-    Data updated at {time_str} UTC+8</div>
+  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr><td align="center"
+      style="color:#64748B;font-size:12px;line-height:1.6;
+        font-family:Arial,sans-serif;">
+      Data updated at {time_str} UTC+8</td></tr>
+  </table>
 </td></tr>
 
 </table>
