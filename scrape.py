@@ -337,14 +337,9 @@ def _build_email_html(articles: list[dict], date_str: str, time_str: str) -> str
     padding:44px 32px 36px;">
   <table width="100%" cellpadding="0" cellspacing="0" border="0">
     <tr><td align="center"
-      style="color:#F8FAFC;font-size:28px;font-weight:700;
-        letter-spacing:-0.3px;padding-top:14px;
-        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
-      🧬 Daily 36Kr AI</td></tr>
-    <tr><td align="center"
-      style="color:#94A3B8;font-size:14px;padding-top:8px;
+      style="color:#94A3B8;font-size:30px;padding-top:8px;
         letter-spacing:1.5px;font-family:Arial,sans-serif;">
-      Have Fun ~</td></tr>
+      🧬 Daily 36Kr AI</td></tr>
     <tr><td align="center" style="padding-top:18px;">
       <div style="width:52px;height:3px;border-radius:2px;margin:0 auto;
         background-color:#6366F1;
