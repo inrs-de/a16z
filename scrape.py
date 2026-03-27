@@ -332,10 +332,9 @@ def _build_email_html(articles: list[dict], date_str: str, time_str: str) -> str
   style="background-color:#0F172A;
     background:linear-gradient(135deg,#0F172A 0%,#1E293B 45%,#334155 100%);
     padding:44px 32px 36px;">
-  <div style="font-size:40px;line-height:1;">&#129302;</div>
-  <div style="color:#F8FAFC;font-size:24px;font-weight:700;margin-top:14px;
+   <div style="color:#F8FAFC !important;font-size:28px;font-weight:700;margin-top:14px;
     letter-spacing:-0.3px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
-    36Kr AI Update</div>
+    🧬 Daily 36Kr AI</div>
   <div style="color:#94A3B8;font-size:14px;margin-top:8px;letter-spacing:1.5px;
     font-family:Arial,sans-serif;">Have Fun ~</div>
   <div style="width:52px;height:3px;border-radius:2px;margin:18px auto 0;
@@ -375,7 +374,7 @@ def send_email(articles: list[dict], now: datetime):
 
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%Y-%m-%d %H:%M")
-    subject = f"🤖 36kr AI Update - {date_str}"
+    subject = f"🤖 Daily 36Kr AI - {date_str}"
     body = _build_email_html(articles, date_str, time_str)
 
     recipients = [r.strip() for r in mail_to.split(",") if r.strip()]
@@ -515,7 +514,7 @@ footer .sm{{font-size:11px;margin-top:8px;color:#334155}}
 
 <header>
   <div class="emoji">&#129302;</div>
-  <h1>36Kr AI Daily</h1>
+  <h1>Daily 36Kr AI</h1>
   <p class="sub">Artificial Intelligence News</p>
   <div class="line"></div>
 </header>
