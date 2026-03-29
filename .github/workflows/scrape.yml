@@ -2,8 +2,8 @@ name: 36Kr AI Scraper
 
 on:
   schedule:
-    - cron: '16 5 * * 1-5'
-    - cron: '36 11 * * 1-5'
+    - cron: '16 5 * * *'
+    - cron: '36 11 * * *'
   workflow_dispatch:
 
 permissions:
