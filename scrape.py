@@ -339,7 +339,7 @@ def _build_email_html(articles: list[dict], date_str: str, time_str: str) -> str
     <tr><td align="center"
       style="color:#F8FAFC;font-size:28px;padding-top:8px;
         letter-spacing:1.5px;font-family:Arial,sans-serif;">
-      🧬 Daily 36Kr AI</td></tr>
+      🧬36Kr AI</td></tr>
     <tr><td align="center" style="padding-top:18px;">
       <div style="width:52px;height:3px;border-radius:2px;margin:0 auto;
         background-color:#6366F1;
@@ -362,7 +362,7 @@ def _build_email_html(articles: list[dict], date_str: str, time_str: str) -> str
     padding:30px 32px;">
   <table width="100%" cellpadding="0" cellspacing="0" border="0">
     <tr><td align="center"
-      style="color:#64748B;font-size:12px;line-height:1.6;
+      style="color:#64748B;font-size:13px;line-height:1.6;
         font-family:Arial,sans-serif;">
       Data updated at {time_str} UTC+8</td></tr>
   </table>
@@ -384,7 +384,7 @@ def send_email(articles: list[dict], now: datetime):
 
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%Y-%m-%d %H:%M")
-    subject = f"🤖 Daily 36Kr AI - {date_str}"
+    subject = f"🤖 36Kr AI - {date_str}"
     body = _build_email_html(articles, date_str, time_str)
 
     recipients = [r.strip() for r in mail_to.split(",") if r.strip()]
