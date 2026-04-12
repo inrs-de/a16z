@@ -19,21 +19,9 @@ FEED_URL = "https://www.a16z.news/feed"
 DOCS_HISTORY_PATH = "docs/history.json"
 DOCS_INDEX_PATH = "docs/index.html"
 
-GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
-MAX_TRANSLATE_CHARS = 5500  # 保守小于 6000，给提示词和响应留余量
+GEMINI_MODEL = "gemini-3.1-flash-lite-preview"  # 注意：不要修改模型名
+MAX_TRANSLATE_CHARS = 5500
 TRANSLATE_RETRIES = 10
-
-
-BLOCK_TAGS = {
-    "p", "div", "section", "article",
-    "h1", "h2", "h3", "h4", "h5", "h6",
-    "ul", "ol", "li",
-    "blockquote",
-    "pre", "code",
-    "table", "thead", "tbody", "tr", "td", "th",
-    "figure", "figcaption",
-    "hr",
-}
 
 
 AD_TEXT_PATTERNS = [
@@ -45,6 +33,7 @@ AD_TEXT_PATTERNS = [
     r"\badvertis(e|ement)\b",
     r"\bpromotion\b",
     r"\bpartner\b",
+    r"\bunsubscribe\b",
 ]
 
 AD_URL_PATTERNS = [
@@ -142,55 +131,203 @@ def is_probably_ad_text(text: str) -> bool:
     return any(re.search(p, t) for p in AD_TEXT_PATTERNS)
 
 
+def is_taxonomy_nav_paragraph(p: Tag) -> bool:
+    """识别: America | Tech | Opinion | Culture | Charts 这类 /t/ 分类导航段落"""
+    if not p or p.name != "p":
+        return False
+    txt = p.get_text(" ", strip=True)
+    if "|" not in txt:
+        return False
+    links = p.find_all("a")
+    if not links:
+        return False
+
+    # 要求：所有链接都指向 /t/ 路径（分类标签）
+    for a in links:
+        href = (a.get("href") or "").strip()
+        if not href:
+            return False
+        if not (href.startswith("https://www.a16z.news/t/") or href.startswith("http://www.a16z.news/t/") or href.startswith("/t/")):
+            return False
+
+    # 段落中不应该有太多其他文本
+    # （分类导航通常非常短）
+    return len(txt) <= 120
+
+
+def node_is_separator_image_container(node: Tag) -> bool:
+    """识别分割线图片容器（含你举例的 2920x10、3098x158 等）"""
+    if not isinstance(node, Tag):
+        return False
+    img = node.find("img")
+    if not img:
+        return False
+    src = (img.get("src") or "").lower()
+    h = img.get("height")
+    w = img.get("width")
+    hi = None
+    wi = None
+    try:
+        hi = int(h) if h is not None else None
+    except Exception:
+        hi = None
+    try:
+        wi = int(w) if w is not None else None
+    except Exception:
+        wi = None
+
+    # 典型细分割线：高度很小
+    if hi is not None and hi <= 12:
+        return True
+
+    # 文末那种“横幅分割线/装饰条”（你点名的 3098x158 -> 邮件里常见无意义装饰）
+    if "_3098x158" in src or "bdfa26cc-8980-41ca-a3bb-7ece793bed5b" in src:
+        return True
+
+    # 其他宽且不算太高的横条图（保守识别）
+    if wi is not None and hi is not None and wi >= 1000 and hi <= 120:
+        return True
+
+    return False
+
+
 def remove_unwanted_nodes(soup: BeautifulSoup) -> None:
+    # 删除明显不适合邮件的节点
     for name in ["script", "style", "button", "svg", "form", "input", "noscript"]:
         for t in soup.find_all(name):
             t.decompose()
 
+    # 删除 Substack 的 digest embed、按钮 wrapper 等（这些基本都是尾部推广/推荐内容）
+    for t in soup.select("div.digest-post-embed"):
+        t.decompose()
+    for t in soup.select("p.button-wrapper"):
+        t.decompose()
+    for t in soup.find_all(attrs={"data-component-name": "ButtonCreateButton"}):
+        t.decompose()
+
+    # 删除 class/id 命中广告/订阅/推荐等
     bad_class_re = re.compile(r"(subscribe|subscription|recommend|promo|advert|sponsor|cta|paywall|banner|share)", re.I)
-    for t in soup.find_all(True):
+    for t in list(soup.find_all(True)):
         cls = " ".join(t.get("class", []))
         tid = t.get("id", "") or ""
         if bad_class_re.search(cls) or bad_class_re.search(tid):
             t.decompose()
 
 
-def drop_header_before_first_real_paragraph(soup: BeautifulSoup) -> None:
+def trim_leading_noncontent(soup: BeautifulSoup) -> None:
+    """
+    删除正文开头的封面图/分类导航/分割线等非正文内容，
+    保留从第一个“像正文的”标题或段落开始。
+    """
     root = soup.body if soup.body else soup
+    children = [c for c in list(root.contents) if isinstance(c, Tag)]
 
-    first_p = None
-    for p in root.find_all("p"):
-        txt = p.get_text(" ", strip=True)
-        if len(txt) >= 40 and not is_probably_ad_text(txt):
-            first_p = p
+    def is_meaningful_heading(t: Tag) -> bool:
+        if t.name not in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            return False
+        txt = t.get_text(" ", strip=True)
+        return bool(txt) and len(txt) >= 4
+
+    def is_meaningful_paragraph(t: Tag) -> bool:
+        if t.name != "p":
+            return False
+        if is_taxonomy_nav_paragraph(t):
+            return False
+        txt = t.get_text(" ", strip=True)
+        if not txt:
+            return False
+        if is_probably_ad_text(txt):
+            return False
+        return len(txt) >= 40
+
+    start_idx = None
+    for i, ch in enumerate(children):
+        # 分类导航直接跳过
+        if ch.name == "p" and is_taxonomy_nav_paragraph(ch):
+            continue
+        # 分割线图片跳过
+        if node_is_separator_image_container(ch):
+            continue
+        # 大图封面容器（captioned-image-container）如果在正文前，也跳过
+        if ch.name == "div" and "captioned-image-container" in (ch.get("class") or []) and ch.find("img") and not ch.get_text(strip=True):
+            continue
+
+        if is_meaningful_heading(ch) or is_meaningful_paragraph(ch):
+            start_idx = i
             break
 
-    if not first_p:
+    if start_idx is None:
         return
 
-    new_children = []
-    found = False
-    for child in list(root.contents):
-        if isinstance(child, NavigableString):
-            if not str(child).strip():
-                continue
-            continue
+    for ch in children[:start_idx]:
+        ch.decompose()
 
-        if not isinstance(child, Tag):
-            continue
 
-        if child is first_p or child.find(lambda x: x is first_p):
-            found = True
+def trim_trailing_promos(soup: BeautifulSoup) -> None:
+    """
+    删除正文末尾推广/订阅/推荐等：
+    - 从第一个 digest-post-embed / subscribe 按钮 / 法律免责声明等起截断到结尾
+    - 同时删除其上方紧邻的分割线图片容器（包括 3098x158 那种）
+    """
+    root = soup.body if soup.body else soup
+    children = [c for c in list(root.contents) if isinstance(c, Tag)]
 
-        if found:
-            new_children.append(child)
+    def is_tail_marker(t: Tag) -> bool:
+        # digest embed
+        if t.name == "div" and "digest-post-embed" in (t.get("class") or []):
+            return True
+        # subscribe 按钮 wrapper
+        if t.name == "p" and "button-wrapper" in (t.get("class") or []):
+            return True
+        # 明显订阅链接
+        if t.find("a", href=re.compile(r"/subscribe(\?|$)", re.I)):
+            # 避免误伤正文里偶尔出现的 subscribe 词，只有当这个块很短时才视为尾部推广
+            txt = t.get_text(" ", strip=True)
+            if len(txt) <= 120:
+                return True
+        # 典型免责声明段落（你示例最后那段）
+        txt = t.get_text(" ", strip=True)
+        if txt and "This newsletter is provided for informational purposes only" in txt:
+            return True
+        # SUBSCRIBE FOR MORE... / Subscribe now 等
+        if txt and re.search(r"\bsubscribe\b", txt, re.I) and len(txt) <= 160:
+            return True
+        return False
 
-    root.clear()
-    for c in new_children:
-        root.append(c)
+    cut_idx = None
+    for i, ch in enumerate(children):
+        if is_tail_marker(ch):
+            cut_idx = i
+            break
+
+    if cut_idx is None:
+        return
+
+    # 删除 cut_idx 及之后所有节点
+    for ch in children[cut_idx:]:
+        ch.decompose()
+
+    # 再删除 cut_idx 之前紧邻的“分割线图/装饰条”
+    # 重新取一次 children（因为上面 decompose 了）
+    children2 = [c for c in list(root.contents) if isinstance(c, Tag)]
+    if children2:
+        last = children2[-1]
+        # 如果最后一个仍然是分割线容器，删
+        if node_is_separator_image_container(last):
+            last.decompose()
+        else:
+            # 或者倒数第二个是分割线（有时最后是空 div 等）
+            if len(children2) >= 2 and node_is_separator_image_container(children2[-2]):
+                children2[-2].decompose()
 
 
 def remove_ads_in_body(soup: BeautifulSoup) -> None:
+    # 删除分类导航段落
+    for p in list(soup.find_all("p")):
+        if is_taxonomy_nav_paragraph(p):
+            p.decompose()
+
+    # 先删“广告型链接”所在的 <a>
     for a in list(soup.find_all("a")):
         href = (a.get("href") or "").strip()
         a_text = a.get_text(" ", strip=True)
@@ -203,12 +340,14 @@ def remove_ads_in_body(soup: BeautifulSoup) -> None:
                     continue
             a.decompose()
 
+    # 删除“广告型文本容器”（短 CTA 更激进）
     for t in list(soup.find_all(["p", "div", "section"])):
         txt = t.get_text(" ", strip=True)
         if is_probably_ad_text(txt):
             if len(txt) <= 200 or re.search(r"(subscribe|upgrade|sponsored|advertis)", txt, re.I):
                 t.decompose()
 
+    # 删除“分割线图片/广告图片”
     for img in list(soup.find_all("img")):
         h = img.get("height")
         try:
@@ -225,7 +364,17 @@ def remove_ads_in_body(soup: BeautifulSoup) -> None:
                 img.decompose()
             continue
 
+        # 很薄的分割线
         if hi is not None and hi <= 10:
+            container = img.find_parent(["p", "div", "figure"])
+            if container:
+                container.decompose()
+            else:
+                img.decompose()
+            continue
+
+        # 你点名的 3098x158 装饰条（以及同类）
+        if "_3098x158" in src.lower() or "bdfa26cc-8980-41ca-a3bb-7ece793bed5b" in src.lower():
             container = img.find_parent(["p", "div", "figure"])
             if container:
                 container.decompose()
@@ -235,6 +384,7 @@ def remove_ads_in_body(soup: BeautifulSoup) -> None:
 
 
 def simplify_images_and_links(soup: BeautifulSoup) -> None:
+    # picture -> img
     for pic in list(soup.find_all("picture")):
         img = pic.find("img")
         if img:
@@ -242,9 +392,11 @@ def simplify_images_and_links(soup: BeautifulSoup) -> None:
         else:
             pic.decompose()
 
+    # 移除 source
     for s in list(soup.find_all("source")):
         s.decompose()
 
+    # 清理 img 属性（去尺寸，防撑破）
     for img in soup.find_all("img"):
         src = img.get("src") or ""
         alt = img.get("alt") or ""
@@ -262,11 +414,14 @@ def normalize_content_html(content_html: str) -> str:
         return ""
 
     soup = BeautifulSoup(content_html, "lxml")
+
     remove_unwanted_nodes(soup)
-    drop_header_before_first_real_paragraph(soup)
+    trim_leading_noncontent(soup)
+    trim_trailing_promos(soup)
     remove_ads_in_body(soup)
     simplify_images_and_links(soup)
 
+    # 删除空节点
     for t in list(soup.find_all(True)):
         if t.name in {"div", "figure"} and not t.get_text(strip=True) and not t.find("img") and not t.find("a"):
             t.decompose()
@@ -361,7 +516,6 @@ class GeminiTranslator:
         }
 
         resp = self._post(payload)
-
         retry_after = resp.headers.get("Retry-After")
         status = resp.status_code
 
@@ -541,7 +695,7 @@ def build_email_html(
               </div>
             """
 
-    html_out = f"""\
+    return f"""\
 <!doctype html>
 <html>
 <head>
@@ -556,7 +710,7 @@ def build_email_html(
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;margin:0 auto;">
           <tr>
             <td style="padding:16px 18px;{header_style}">
-              <div style="color:#FFFFFF;font-size:28px;line-height:1.4;font-weight:700;">
+              <div style="color:#FFFFFF;font-size:30px;line-height:1.4;font-weight:700;">
                 🥤 a16z news
               </div>
             </td>
@@ -571,7 +725,7 @@ def build_email_html(
           <tr>
             <td style="padding:14px 18px;{footer_style}">
               <div style="color:#E5E7EB;font-size:12px;line-height:1.4;text-align:center;">
-                Updated at {esc(updated_str)}
+                Updated at {html.escape(updated_str)}
               </div>
             </td>
           </tr>
@@ -583,7 +737,6 @@ def build_email_html(
 </body>
 </html>
 """
-    return html_out
 
 
 def build_plain_text(send_dt_bj: datetime, article: Optional[Article], translation_ok: bool) -> str:
@@ -816,7 +969,8 @@ def main():
     article = None
     translation_ok = False
 
-    zh_title = zh_desc = zh_creator = zh_pub = None
+    zh_title = zh_desc = zh_pub = None
+    zh_creator = None  # 不翻译 creator：直接复用
     zh_content_html = None
     normalized_content_html = ""
 
@@ -829,28 +983,28 @@ def main():
     if article:
         normalized_content_html = normalize_content_html(article.content_html)
 
-    # 翻译（没有 key 或无文章则跳过；翻译失败不影响发英文）
+    # 翻译（creator 不翻译）
     if article and gemini_key:
         translator = GeminiTranslator(gemini_key)
+        zh_creator = article.creator  # 关键：不翻译 dc:creator
 
         try:
             zh_title, ok1 = translate_short_text(translator, article.title)
-            zh_creator, ok2 = translate_short_text(translator, article.creator or "")
 
             pub_bj = article.pub_dt_utc.astimezone(ZoneInfo("Asia/Shanghai"))
             pub_bj_str = pub_bj.strftime("%Y-%m-%d %H:%M UTC+8")
-            zh_pub, ok3 = translate_short_text(translator, pub_bj_str)
+            zh_pub, ok2 = translate_short_text(translator, pub_bj_str)
 
             desc_html = (article.description or "").strip()
             if desc_html:
-                zh_desc_html, ok4 = translate_long_html(translator, desc_html)
-                zh_desc = zh_desc_html if ok4 else None
+                zh_desc_html, ok3 = translate_long_html(translator, desc_html)
+                zh_desc = zh_desc_html if ok3 else None
             else:
-                zh_desc, ok4 = "", True
+                zh_desc, ok3 = "", True
 
-            zh_content_html, ok5 = translate_long_html(translator, normalized_content_html)
+            zh_content_html, ok4 = translate_long_html(translator, normalized_content_html)
 
-            translation_ok = all([ok1, ok2, ok3, ok4, ok5]) and (zh_content_html is not None)
+            translation_ok = all([ok1, ok2, ok3, ok4]) and (zh_content_html is not None)
         except Exception:
             translation_ok = False
             zh_content_html = None
@@ -878,7 +1032,6 @@ def main():
             plain_body=plain,
         )
     except Exception:
-        # 不终止脚本
         pass
 
     try:
