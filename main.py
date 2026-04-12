@@ -20,30 +20,18 @@ DOCS_HISTORY_PATH = "docs/history.json"
 DOCS_INDEX_PATH = "docs/index.html"
 
 GEMINI_MODEL = "gemini-3.1-flash-lite-preview"  # 注意：不要修改模型名
-MAX_TRANSLATE_CHARS = 5500  # 保守小于 6000，给提示词和响应留余量
+MAX_TRANSLATE_CHARS = 5500
 TRANSLATE_RETRIES = 10
-
-
-BLOCK_TAGS = {
-    "p", "div", "section", "article",
-    "h1", "h2", "h3", "h4", "h5", "h6",
-    "ul", "ol", "li",
-    "blockquote",
-    "pre", "code",
-    "table", "thead", "tbody", "tr", "td", "th",
-    "figure", "figcaption",
-    "hr",
-}
 
 
 AD_TEXT_PATTERNS = [
     r"\bsubscribe\b",
-    r"\bnewsletter\b",
-    r"\bupgrade\b",
+    r"\bunsubscribe\b",
     r"\bpaid subscribers?\b",
     r"\bsponsored\b",
     r"\badvertis(e|ement)\b",
     r"\bpromotion\b",
+    # “newsletter / partner / upgrade” 太容易误伤正文，这里不再作为强规则
 ]
 
 AD_URL_PATTERNS = [
@@ -67,7 +55,6 @@ def now_beijing() -> datetime:
 
 
 def parse_mail_to(raw: str) -> List[dict]:
-    # 支持: a@x.com,b@y.com  或 a@x.com; b@y.com
     parts = re.split(r"[;,]\s*", raw.strip())
     parts = [p.strip() for p in parts if p.strip()]
     return [{"address": p, "display_name": ""} for p in parts]
@@ -99,17 +86,14 @@ def parse_latest_article(feed_xml: str) -> Optional[Article]:
 
     title = (e.get("title") or "").strip()
     description = (e.get("description") or e.get("summary") or "").strip()
-
     creator = (e.get("dc_creator") or e.get("author") or "").strip()
     pub_raw = (e.get("published") or e.get("pubDate") or "").strip()
-
     link = (e.get("link") or "").strip()
 
     content_html = ""
     if "content" in e and e.content:
         content_html = (e.content[0].value or "").strip()
     else:
-        # fallback: some feeds use summary as content
         content_html = (e.get("summary") or "").strip()
 
     if not title or not pub_raw:
@@ -145,148 +129,207 @@ def is_probably_ad_text(text: str) -> bool:
     return any(re.search(p, t) for p in AD_TEXT_PATTERNS)
 
 
+def is_taxonomy_nav_paragraph(p: Tag) -> bool:
+    """识别: America | Tech | Opinion | Culture | Charts 这类 /t/ 分类导航段落"""
+    if not p or p.name != "p":
+        return False
+    txt = p.get_text(" ", strip=True)
+    if "|" not in txt:
+        return False
+    links = p.find_all("a")
+    if not links:
+        return False
+
+    # 要求：所有链接都指向 /t/ 路径（分类标签）
+    for a in links:
+        href = (a.get("href") or "").strip()
+        if not href:
+            return False
+        if not (href.startswith("https://www.a16z.news/t/") or href.startswith("http://www.a16z.news/t/") or href.startswith("/t/")):
+            return False
+
+    # 段落中不应该有太多其他文本
+    # （分类导航通常非常短）
+    return len(txt) <= 120
+
+
+def node_is_separator_image_container(node: Tag) -> bool:
+    """识别分割线图片容器（含你举例的 2920x10、3098x158 等）"""
+    if not isinstance(node, Tag):
+        return False
+    img = node.find("img")
+    if not img:
+        return False
+    src = (img.get("src") or "").lower()
+    h = img.get("height")
+    w = img.get("width")
+    hi = None
+    wi = None
+    try:
+        hi = int(h) if h is not None else None
+    except Exception:
+        hi = None
+    try:
+        wi = int(w) if w is not None else None
+    except Exception:
+        wi = None
+
+    # 典型细分割线：高度很小
+    if hi is not None and hi <= 12:
+        return True
+
+    # 文末那种“横幅分割线/装饰条”（你点名的 3098x158 -> 邮件里常见无意义装饰）
+    if "_3098x158" in src or "bdfa26cc-8980-41ca-a3bb-7ece793bed5b" in src:
+        return True
+
+    # 其他宽且不算太高的横条图（保守识别）
+    if wi is not None and hi is not None and wi >= 1000 and hi <= 120:
+        return True
+
+    return False
+
+
 def remove_unwanted_nodes(soup: BeautifulSoup) -> None:
     # 删除明显不适合邮件的节点
     for name in ["script", "style", "button", "svg", "form", "input", "noscript"]:
         for t in soup.find_all(name):
             t.decompose()
 
-    # 删除 class/id 命中广告/订阅/推荐等（只删除明确的容器）
-    bad_class_re = re.compile(r"(button-wrapper|digest-post-embed|subscription|paywall|banner)", re.I)
-    for t in soup.find_all(True):
+    # 删除 Substack 的 digest embed、按钮 wrapper 等（这些基本都是尾部推广/推荐内容）
+    for t in soup.select("div.digest-post-embed"):
+        t.decompose()
+    for t in soup.select("p.button-wrapper"):
+        t.decompose()
+    for t in soup.find_all(attrs={"data-component-name": "ButtonCreateButton"}):
+        t.decompose()
+
+    # 删除 class/id 命中广告/订阅/推荐等
+    bad_class_re = re.compile(r"(subscribe|subscription|recommend|promo|advert|sponsor|cta|paywall|banner|share)", re.I)
+    for t in list(soup.find_all(True)):
         cls = " ".join(t.get("class", []))
         tid = t.get("id", "") or ""
         if bad_class_re.search(cls) or bad_class_re.search(tid):
             t.decompose()
 
 
-def drop_header_before_first_real_paragraph(soup: BeautifulSoup) -> None:
+def trim_leading_noncontent(soup: BeautifulSoup) -> None:
     """
-    需求：示例里"Yesterday..."之前的内容都不要（包括顶部图片、分类链接、分隔线图片等）。
-    做法：从文档中找到第一个"有足够正文文本"的 <p>，移除其之前的所有兄弟节点。
+    删除正文开头的封面图/分类导航/分割线等非正文内容，
+    保留从第一个“像正文的”标题或段落开始。
     """
-    # 取 body（若没有 body 就用 soup 本身）
     root = soup.body if soup.body else soup
+    children = [c for c in list(root.contents) if isinstance(c, Tag)]
 
-    # 找到第一个"正文段落"
-    first_p = None
-    for p in root.find_all("p"):
-        txt = p.get_text(" ", strip=True)
-        # 排除纯分类链接/太短的/广告
-        if len(txt) >= 40 and not is_probably_ad_text(txt):
-            # 进一步排除"只含链接"的段落
-            links = p.find_all("a")
-            if links:
-                link_text_len = sum(len(a.get_text(strip=True)) for a in links)
-                # 如果段落文本几乎全是链接文本，跳过
-                if link_text_len / max(len(txt), 1) > 0.9:
-                    continue
-            first_p = p
+    def is_meaningful_heading(t: Tag) -> bool:
+        if t.name not in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            return False
+        txt = t.get_text(" ", strip=True)
+        return bool(txt) and len(txt) >= 4
+
+    def is_meaningful_paragraph(t: Tag) -> bool:
+        if t.name != "p":
+            return False
+        if is_taxonomy_nav_paragraph(t):
+            return False
+        txt = t.get_text(" ", strip=True)
+        if not txt:
+            return False
+        if is_probably_ad_text(txt):
+            return False
+        return len(txt) >= 40
+
+    start_idx = None
+    for i, ch in enumerate(children):
+        # 分类导航直接跳过
+        if ch.name == "p" and is_taxonomy_nav_paragraph(ch):
+            continue
+        # 分割线图片跳过
+        if node_is_separator_image_container(ch):
+            continue
+        # 大图封面容器（captioned-image-container）如果在正文前，也跳过
+        if ch.name == "div" and "captioned-image-container" in (ch.get("class") or []) and ch.find("img") and not ch.get_text(strip=True):
+            continue
+
+        if is_meaningful_heading(ch) or is_meaningful_paragraph(ch):
+            start_idx = i
             break
 
-    if not first_p:
+    if start_idx is None:
         return
 
-    # 删除 first_p 之前的内容（同层级）
-    new_children = []
-    found = False
-    for child in list(root.contents):
-        if isinstance(child, NavigableString):
-            if not str(child).strip():
-                continue
-            continue
-
-        if not isinstance(child, Tag):
-            continue
-
-        if child is first_p or child.find(lambda x: x is first_p):
-            found = True
-
-        if found:
-            new_children.append(child)
-
-    # 清空并重建
-    root.clear()
-    for c in new_children:
-        root.append(c)
+    for ch in children[:start_idx]:
+        ch.decompose()
 
 
-def remove_category_links(soup: BeautifulSoup) -> None:
+def trim_trailing_promos(soup: BeautifulSoup) -> None:
     """
-    移除顶部分类链接（America | Tech | Opinion | Culture | Charts）
-    特征：
-    1. <p> 标签
-    2. style 包含 text-align: center
-    3. 包含多个 /t/ 链接
-    4. 文本很短（< 100 字符）
-    5. 几乎全是链接文本
+    删除正文末尾推广/订阅/推荐等：
+    - 从第一个 digest-post-embed / subscribe 按钮 / 法律免责声明等起截断到结尾
+    - 同时删除其上方紧邻的分割线图片容器（包括 3098x158 那种）
     """
-    for p in list(soup.find_all("p")):
-        style = (p.get("style") or "").lower()
-        txt = p.get_text(" ", strip=True)
-        
-        # 只处理短段落（避免误删正文）
-        if len(txt) > 100:
-            continue
-        
-        # 检查是否居中对齐
-        if "text-align" not in style or "center" not in style:
-            continue
-        
-        # 检查是否包含多个 /t/ 分类链接
-        links = p.find_all("a")
-        if len(links) < 3:
-            continue
-        
-        hrefs = [a.get("href", "") for a in links]
-        if not all("/t/" in h for h in hrefs):
-            continue
-        
-        # 检查是否几乎全是链接文本
-        link_text_len = sum(len(a.get_text(strip=True)) for a in links)
-        if link_text_len / max(len(txt), 1) > 0.7:
-            p.decompose()
+    root = soup.body if soup.body else soup
+    children = [c for c in list(root.contents) if isinstance(c, Tag)]
 
+    def is_tail_marker(t: Tag) -> bool:
+        # digest embed
+        if t.name == "div" and "digest-post-embed" in (t.get("class") or []):
+            return True
+        # subscribe 按钮 wrapper
+        if t.name == "p" and "button-wrapper" in (t.get("class") or []):
+            return True
+        # 明显订阅链接
+        if t.find("a", href=re.compile(r"/subscribe(\?|$)", re.I)):
+            # 避免误伤正文里偶尔出现的 subscribe 词，只有当这个块很短时才视为尾部推广
+            txt = t.get_text(" ", strip=True)
+            if len(txt) <= 120:
+                return True
+        # 典型免责声明段落（你示例最后那段）
+        txt = t.get_text(" ", strip=True)
+        if txt and "This newsletter is provided for informational purposes only" in txt:
+            return True
+        # SUBSCRIBE FOR MORE... / Subscribe now 等
+        if txt and re.search(r"\bsubscribe\b", txt, re.I) and len(txt) <= 160:
+            return True
+        return False
 
-def remove_footer_subscribe_and_embeds(soup: BeautifulSoup) -> None:
-    """
-    移除正文末尾的：
-    1. 分隔线图片（bdfa26cc 或 8c68d5c7 等）
-    2. Subscribe now 按钮（已在 remove_unwanted_nodes 中删除）
-    3. digest-post-embed（已在 remove_unwanted_nodes 中删除）
-    4. 免责声明段落（This newsletter is provided for...）
-    """
-    # 1) 删除末尾分隔线图片（识别特征：特定 ID 或很宽很薄）
-    for img in list(soup.find_all("img")):
-        src = (img.get("src") or "").strip()
-        # 匹配常见分隔线图片 URL 特征
-        if any(x in src for x in ["bdfa26cc-8980-41ca-a3bb-7ece793bed5b", "8c68d5c7-8a95-49ea-9c12-8cf7f5f0f1a1"]):
-            container = img.find_parent(["p", "div", "figure"])
-            if container:
-                container.decompose()
-            else:
-                img.decompose()
+    cut_idx = None
+    for i, ch in enumerate(children):
+        if is_tail_marker(ch):
+            cut_idx = i
+            break
 
-    # 2) 删除免责声明段落（This newsletter is provided for...）
-    for p in list(soup.find_all("p")):
-        txt = p.get_text(" ", strip=True)
-        if "This newsletter is provided for informational purposes" in txt:
-            p.decompose()
+    if cut_idx is None:
+        return
+
+    # 删除 cut_idx 及之后所有节点
+    for ch in children[cut_idx:]:
+        ch.decompose()
+
+    # 再删除 cut_idx 之前紧邻的“分割线图/装饰条”
+    # 重新取一次 children（因为上面 decompose 了）
+    children2 = [c for c in list(root.contents) if isinstance(c, Tag)]
+    if children2:
+        last = children2[-1]
+        # 如果最后一个仍然是分割线容器，删
+        if node_is_separator_image_container(last):
+            last.decompose()
+        else:
+            # 或者倒数第二个是分割线（有时最后是空 div 等）
+            if len(children2) >= 2 and node_is_separator_image_container(children2[-2]):
+                children2[-2].decompose()
 
 
 def remove_ads_in_body(soup: BeautifulSoup) -> None:
-    """
-    删除正文中、正文后出现的广告图片及 URL：
-    - 含广告关键词的段落/容器（保守删除，只删明确 CTA）
-    - href 命中常见追踪/订阅/重定向
-    - 很薄的分隔线图片（高度很小）也删
-    """
-    # 先删"广告型链接"所在的 <a> 以及只包含该链接的父段落
+    # 删除分类导航段落
+    for p in list(soup.find_all("p")):
+        if is_taxonomy_nav_paragraph(p):
+            p.decompose()
+
+    # 先删“广告型链接”所在的 <a>
     for a in list(soup.find_all("a")):
         href = (a.get("href") or "").strip()
         a_text = a.get_text(" ", strip=True)
         if is_probably_ad_url(href) or is_probably_ad_text(a_text):
-            # 如果父亲是 p/div 且内容基本就是它，删父亲更干净
             parent = a.parent if isinstance(a.parent, Tag) else None
             if parent and parent.name in {"p", "div"}:
                 parent_text = parent.get_text(" ", strip=True)
@@ -295,22 +338,19 @@ def remove_ads_in_body(soup: BeautifulSoup) -> None:
                     continue
             a.decompose()
 
-    # 删除"广告型文本容器"（更保守：只删明确的短 CTA）
-    for t in list(soup.find_all(["p", "div"])):
+    # 删除“广告型文本容器”（短 CTA 更激进）
+    for t in list(soup.find_all(["p", "div", "section"])):
         txt = t.get_text(" ", strip=True)
-        
-        # 只删除短文本（< 100 字符）且包含明确广告关键词
-        if len(txt) > 100:
+        if not txt:
             continue
-        
+
+        # 只删除“明显 CTA/广告语”的短块，避免误伤正文
         if is_probably_ad_text(txt):
-            # 进一步检查：只删除明确的 CTA（包含 subscribe/upgrade 等）
-            if re.search(r"(subscribe|upgrade|sponsored)", txt, re.I):
+            if len(txt) <= 220 or t.find("a", href=re.compile(r"/subscribe(\?|$)", re.I)):
                 t.decompose()
 
-    # 删除"广告/分隔线图片"与其容器（比如 2920x10 这种）
+    # 删除“分割线图片/广告图片”
     for img in list(soup.find_all("img")):
-        w = img.get("width")
         h = img.get("height")
         try:
             hi = int(h) if h is not None else None
@@ -326,8 +366,17 @@ def remove_ads_in_body(soup: BeautifulSoup) -> None:
                 img.decompose()
             continue
 
-        # 删除高度 <= 10 的分隔线图片
+        # 很薄的分割线
         if hi is not None and hi <= 10:
+            container = img.find_parent(["p", "div", "figure"])
+            if container:
+                container.decompose()
+            else:
+                img.decompose()
+            continue
+
+        # 你点名的 3098x158 装饰条（以及同类）
+        if "_3098x158" in src.lower() or "bdfa26cc-8980-41ca-a3bb-7ece793bed5b" in src.lower():
             container = img.find_parent(["p", "div", "figure"])
             if container:
                 container.decompose()
@@ -337,12 +386,6 @@ def remove_ads_in_body(soup: BeautifulSoup) -> None:
 
 
 def simplify_images_and_links(soup: BeautifulSoup) -> None:
-    """
-    - 保留图片与链接
-    - 去掉图片尺寸信息（width/height/srcset/sizes 等），避免手机端撑破
-    - 去掉 picture/source 等复杂结构，只保留 img
-    - 给 img 加 max-width:100%; height:auto;
-    """
     # picture -> img
     for pic in list(soup.find_all("picture")):
         img = pic.find("img")
@@ -351,21 +394,17 @@ def simplify_images_and_links(soup: BeautifulSoup) -> None:
         else:
             pic.decompose()
 
-    # 移除 source（如果还有残留）
+    # 移除 source
     for s in list(soup.find_all("source")):
         s.decompose()
 
-    # 清理 img 属性
+    # 清理 img 属性（去尺寸，防撑破）
     for img in soup.find_all("img"):
-        # 保留 src / alt
         src = img.get("src") or ""
         alt = img.get("alt") or ""
         img.attrs = {"src": src, "alt": alt}
-
-        # 防止撑破
         img["style"] = "max-width:100% !important;height:auto !important;display:block;border:0;"
 
-    # 统一 a 标签（邮件里 target/_blank 不一定有效，但不影响）
     for a in soup.find_all("a"):
         href = a.get("href")
         if href:
@@ -373,36 +412,23 @@ def simplify_images_and_links(soup: BeautifulSoup) -> None:
 
 
 def normalize_content_html(content_html: str) -> str:
-    """
-    清洗 content:encoded：
-    - 删除头部非正文
-    - 删除分类链接
-    - 删除广告图片与链接
-    - 删除末尾 Subscribe/推荐文章/免责声明
-    - 去掉图片尺寸信息
-    - 尽量去掉游离重复文本
-    """
     if not content_html:
         return ""
 
     soup = BeautifulSoup(content_html, "lxml")
 
     remove_unwanted_nodes(soup)
-    drop_header_before_first_real_paragraph(soup)
-    remove_category_links(soup)
+    trim_leading_noncontent(soup)
+    trim_trailing_promos(soup)
     remove_ads_in_body(soup)
-    remove_footer_subscribe_and_embeds(soup)
     simplify_images_and_links(soup)
 
     # 删除空节点
     for t in list(soup.find_all(True)):
-        # 空 div/figure 等
         if t.name in {"div", "figure"} and not t.get_text(strip=True) and not t.find("img") and not t.find("a"):
             t.decompose()
 
-    # 输出：取 body 内部（若有）
     root = soup.body if soup.body else soup
-    # 仅拼接 Tag（忽略游离字符串，避免"重复摘要"）
     parts = []
     for child in root.contents:
         if isinstance(child, Tag):
@@ -411,9 +437,6 @@ def normalize_content_html(content_html: str) -> str:
 
 
 def split_html_by_block_boundaries(html_str: str, max_chars: int) -> List[str]:
-    """
-    按块级 HTML 标签边界拆分，尽量保证每段 <= max_chars，不从标签中间切断。
-    """
     html_str = (html_str or "").strip()
     if len(html_str) <= max_chars:
         return [html_str] if html_str else []
@@ -421,14 +444,12 @@ def split_html_by_block_boundaries(html_str: str, max_chars: int) -> List[str]:
     soup = BeautifulSoup(html_str, "lxml")
     root = soup.body if soup.body else soup
 
-    # 只取顶层 tag，作为天然边界
     blocks: List[str] = []
     for child in root.contents:
         if isinstance(child, Tag):
             blocks.append(str(child))
 
     if not blocks:
-        # 兜底：纯文本硬切（尽量不发生）
         chunks = []
         s = html_str
         while s:
@@ -443,7 +464,6 @@ def split_html_by_block_boundaries(html_str: str, max_chars: int) -> List[str]:
             if len(b) <= max_chars:
                 buf = b
             else:
-                # 单个块超长：递归拆
                 chunks.extend(split_html_by_block_boundaries(b, max_chars))
                 buf = ""
             continue
@@ -479,9 +499,6 @@ class GeminiTranslator:
         )
 
     def translate_html(self, html_chunk: str) -> Tuple[Optional[str], Optional[int], Optional[str], Optional[str]]:
-        """
-        return: (translated_html, http_status, err_type, retry_after_seconds_str)
-        """
         prompt = (
             "You are a professional translator.\n"
             "Translate the following HTML from English to Simplified Chinese.\n"
@@ -496,20 +513,15 @@ class GeminiTranslator:
         )
 
         payload = {
-            "contents": [
-                {"role": "user", "parts": [{"text": prompt}]}
-            ],
-            "generationConfig": {
-                "temperature": 0.2,
-            },
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.2},
         }
 
         resp = self._post(payload)
-
         retry_after = resp.headers.get("Retry-After")
         status = resp.status_code
 
-        if status >= 200 and status < 300:
+        if 200 <= status < 300:
             try:
                 data = resp.json()
                 candidates = data.get("candidates") or []
@@ -518,16 +530,13 @@ class GeminiTranslator:
                 parts = candidates[0].get("content", {}).get("parts", [])
                 if not parts:
                     return None, status, "empty_parts", retry_after
-                text = parts[0].get("text", "")
-                text = (text or "").strip()
+                text = (parts[0].get("text", "") or "").strip()
                 if not text:
                     return None, status, "empty_text", retry_after
                 return text, status, None, retry_after
             except Exception as ex:
                 return None, status, f"json_parse_error:{ex}", retry_after
 
-        # 非 2xx
-        err_type = None
         if status in (400, 401, 403):
             err_type = "fatal"
         elif status == 429:
@@ -539,7 +548,6 @@ class GeminiTranslator:
 
 
 def backoff_sleep_seconds(attempt_index: int) -> float:
-    # attempt_index: 0..n-1
     base = 2.0
     cap = 120.0
     delay = min(cap, base * (2 ** attempt_index))
@@ -548,10 +556,6 @@ def backoff_sleep_seconds(attempt_index: int) -> float:
 
 
 def translate_long_html(translator: GeminiTranslator, html_str: str) -> Tuple[Optional[str], bool]:
-    """
-    返回 (translated_html_or_none, ok)
-    - ok=False 表示翻译失败（按需求：继续发英文邮件）
-    """
     html_str = (html_str or "").strip()
     if not html_str:
         return "", True
@@ -564,7 +568,6 @@ def translate_long_html(translator: GeminiTranslator, html_str: str) -> Tuple[Op
 
     for idx, chunk in enumerate(chunks):
         success = False
-        fatal_abort = False
 
         for attempt in range(TRANSLATE_RETRIES):
             translated, status, err_type, retry_after = translator.translate_html(chunk)
@@ -574,12 +577,9 @@ def translate_long_html(translator: GeminiTranslator, html_str: str) -> Tuple[Op
                 success = True
                 break
 
-            # 不可重试错误：立即退出翻译（但不终止脚本）
             if err_type == "fatal":
-                fatal_abort = True
-                break
+                return None, False
 
-            # 429：按 Retry-After 自适应等待
             if err_type == "rate_limited":
                 if retry_after:
                     try:
@@ -591,18 +591,13 @@ def translate_long_html(translator: GeminiTranslator, html_str: str) -> Tuple[Op
                 time.sleep(wait_s)
                 continue
 
-            # 其他可重试
             time.sleep(backoff_sleep_seconds(attempt))
 
         if not success:
-            return None, False  # 任意一段失败：整体按失败处理（按需求发英文）
+            return None, False
 
-        # 每段翻译成功后暂停 15s（最后一段不需要）
         if idx != len(chunks) - 1:
             time.sleep(15)
-
-        if fatal_abort:
-            return None, False
 
     return "\n".join(translated_chunks).strip(), True
 
@@ -611,18 +606,16 @@ def translate_short_text(translator: GeminiTranslator, text: str) -> Tuple[Optio
     text = (text or "").strip()
     if not text:
         return "", True
+
     if len(text) >= 6000:
-        # 当作"长文本"，走分段（用 <p> 包起来，避免破坏结构）
         wrapped = f"<p>{html.escape(text)}</p>"
         translated_html, ok = translate_long_html(translator, wrapped)
         if not ok or translated_html is None:
             return None, False
-        # 提取文本
         soup = BeautifulSoup(translated_html, "lxml")
         p = soup.find("p")
         return (p.get_text(strip=True) if p else soup.get_text(" ", strip=True)), True
 
-    # 小文本直接翻译（走 html 翻译，避免额外输出）
     wrapped = f"<p>{html.escape(text)}</p>"
     translated_html, ok = translate_long_html(translator, wrapped)
     if not ok or translated_html is None:
@@ -638,6 +631,7 @@ def build_email_html(
     normalized_content_html: str,
     zh_title: Optional[str],
     zh_desc: Optional[str],
+    zh_creator: Optional[str],
     zh_pub: Optional[str],
     zh_content_html: Optional[str],
     translation_ok: bool,
@@ -650,11 +644,8 @@ def build_email_html(
     )
     footer_style = header_style
 
-    # 通用文本样式
     en_style = "color:#111827;font-size:14px !important;line-height:1.6 !important;"
     zh_style = "color:#374151;font-size:14px !important;line-height:1.6 !important;"
-
-    # 中文每行约 20 字：用较窄最大宽度（移动端更接近要求）
     zh_narrow_wrap = "max-width:360px;margin:0 auto;"
 
     def esc(s: str) -> str:
@@ -670,7 +661,6 @@ def build_email_html(
         pub_bj = article.pub_dt_utc.astimezone(ZoneInfo("Asia/Shanghai"))
         pub_bj_str = pub_bj.strftime("%Y-%m-%d %H:%M UTC+8")
 
-        # 英文块（creator 不翻译）
         en_block = f"""
           <div style="{en_style}">
             <p style="margin:0 0 10px 0;"><strong>📖 ENGLISH</strong></p>
@@ -684,13 +674,12 @@ def build_email_html(
         """
 
         if translation_ok and zh_content_html is not None:
-            # 中文块（creator 保持英文，不翻译）
             zh_block = f"""
               <div style="{zh_style}">
                 <p style="margin:18px 0 10px 0;"><strong>🤖 中文翻译</strong></p>
                 <div style="{zh_narrow_wrap}">
                   <h2 style="margin:0 0 10px 0;color:#374151;font-size:18px;line-height:1.3;">{esc(zh_title or "")}</h2>
-                  <p style="margin:0 0 6px 0;">✍️ {esc(article.creator or "")}</p>
+                  <p style="margin:0 0 6px 0;">✍️ {esc(zh_creator or "")}</p>
                   <p style="margin:0 0 12px 0;">📅 {esc(zh_pub or "")}</p>
                   <p style="margin:0 0 12px 0;"><a href="{esc(article.link)}" style="color:#2563EB;text-decoration:underline;">打开原文</a></p>
                   {f'<div style="margin:0 0 14px 0;">{zh_desc}</div>' if zh_desc else ''}
@@ -700,7 +689,6 @@ def build_email_html(
             """
             body_inner = en_block + zh_block
         else:
-            # 按需求：翻译失败时，邮件只含英文原文
             body_inner = en_block + f"""
               <div style="{en_style}">
                 <p style="margin:18px 0 0 0;">
@@ -709,8 +697,7 @@ def build_email_html(
               </div>
             """
 
-    # 邮件 HTML（table 布局，提高移动端兼容性）
-    html_out = f"""\
+    return f"""\
 <!doctype html>
 <html>
 <head>
@@ -740,7 +727,7 @@ def build_email_html(
           <tr>
             <td style="padding:14px 18px;{footer_style}">
               <div style="color:#E5E7EB;font-size:12px;line-height:1.4;text-align:center;">
-                Updated at {esc(updated_str)}
+                Updated at {html.escape(updated_str)}
               </div>
             </td>
           </tr>
@@ -752,7 +739,6 @@ def build_email_html(
 </body>
 </html>
 """
-    return html_out
 
 
 def build_plain_text(send_dt_bj: datetime, article: Optional[Article], translation_ok: bool) -> str:
@@ -774,7 +760,6 @@ def build_plain_text(send_dt_bj: datetime, article: Optional[Article], translati
         "",
     ]
     if article.description:
-        # description 可能含 HTML，这里简单去标签
         soup = BeautifulSoup(article.description, "lxml")
         lines.append(soup.get_text(" ", strip=True))
         lines.append("")
@@ -806,10 +791,7 @@ def send_mail_via_maileroo(
 
     r = requests.post(
         url,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         data=json.dumps(payload),
         timeout=30,
     )
@@ -963,14 +945,11 @@ def update_github_pages_history(article: Optional[Article], send_dt_bj: datetime
             "link": article.link,
         }
 
-        # 去重（按 link）
         history = [h for h in history if h.get("link") != record["link"]]
         history.insert(0, record)
         history = history[:10]
-
         write_history(history)
 
-    # index 始终重建（即使没文章也刷新 updated）
     index_html = render_docs_index(history, send_dt_bj)
     ensure_docs_dir()
     with open(DOCS_INDEX_PATH, "w", encoding="utf-8") as f:
@@ -978,13 +957,13 @@ def update_github_pages_history(article: Optional[Article], send_dt_bj: datetime
 
 
 def main():
-    # env（不要写进代码）
     maileroo_key = env_required("MAILEROO_API_KEY")
     mail_from = env_required("MAIL_FROM")
     mail_to_raw = env_required("MAIL_TO")
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
 
     to_list = parse_mail_to(mail_to_raw)
+
     send_dt_bj = now_beijing()
     subject_date_bj = send_dt_bj.strftime("%Y-%m-%d")
     subject = f"🥤a16z news - {subject_date_bj}"
@@ -993,63 +972,58 @@ def main():
     translation_ok = False
 
     zh_title = zh_desc = zh_pub = None
+    zh_creator = None  # 不翻译 creator：直接复用
     zh_content_html = None
+    normalized_content_html = ""
 
-    # 获取最新 1 篇文章（不要求必须是当天）
     try:
         feed_xml = fetch_feed_xml(FEED_URL)
         article = parse_latest_article(feed_xml)
     except Exception:
         article = None
 
-    normalized_content_html = ""
     if article:
         normalized_content_html = normalize_content_html(article.content_html)
 
-    # 翻译（如果没有 KEY 或无文章则跳过）
+    # 翻译（creator 不翻译）
     if article and gemini_key:
         translator = GeminiTranslator(gemini_key)
+        zh_creator = article.creator  # 关键：不翻译 dc:creator
 
         try:
             zh_title, ok1 = translate_short_text(translator, article.title)
-            
-            # creator 不翻译（保持英文）
-            ok2 = True
 
             pub_bj = article.pub_dt_utc.astimezone(ZoneInfo("Asia/Shanghai"))
             pub_bj_str = pub_bj.strftime("%Y-%m-%d %H:%M UTC+8")
-            zh_pub, ok3 = translate_short_text(translator, pub_bj_str)
+            zh_pub, ok2 = translate_short_text(translator, pub_bj_str)
 
-            # description 可能是 html：用 translate_html，长度通常不大
             desc_html = (article.description or "").strip()
             if desc_html:
-                zh_desc_html, ok4 = translate_long_html(translator, desc_html)
-                zh_desc = zh_desc_html if ok4 else None
+                zh_desc_html, ok3 = translate_long_html(translator, desc_html)
+                zh_desc = zh_desc_html if ok3 else None
             else:
-                zh_desc, ok4 = "", True
+                zh_desc, ok3 = "", True
 
-            # content：长文本按块拆分
-            zh_content_html, ok5 = translate_long_html(translator, normalized_content_html)
+            zh_content_html, ok4 = translate_long_html(translator, normalized_content_html)
 
-            translation_ok = all([ok1, ok2, ok3, ok4, ok5]) and (zh_content_html is not None)
+            translation_ok = all([ok1, ok2, ok3, ok4]) and (zh_content_html is not None)
         except Exception:
             translation_ok = False
             zh_content_html = None
 
-    # 邮件 html/plain
     email_html = build_email_html(
         send_dt_bj=send_dt_bj,
         article=article,
         normalized_content_html=normalized_content_html,
         zh_title=zh_title,
         zh_desc=zh_desc,
+        zh_creator=zh_creator,
         zh_pub=zh_pub,
         zh_content_html=zh_content_html,
         translation_ok=translation_ok,
     )
     plain = build_plain_text(send_dt_bj, article, translation_ok)
 
-    # 发送邮件（即使翻译失败也必须继续发）
     try:
         send_mail_via_maileroo(
             api_key=maileroo_key,
@@ -1060,10 +1034,8 @@ def main():
             plain_body=plain,
         )
     except Exception:
-        # 按需求：不要终止整个脚本（Pages/history 仍需更新）
         pass
 
-    # 更新 GitHub Pages（保留最近 10 条历史）
     try:
         update_github_pages_history(article, send_dt_bj)
     except Exception:
