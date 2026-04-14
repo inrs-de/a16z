@@ -30,7 +30,7 @@ FEED_URL = "https://www.a16z.news/feed"
 DOCS_HISTORY_PATH = "docs/history.json"
 DOCS_INDEX_PATH = "docs/index.html"
 
-GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 MAX_TRANSLATE_CHARS = 5500
 TRANSLATE_RETRIES = 10
 
@@ -447,16 +447,18 @@ def split_html_by_block_boundaries(html_str: str, max_chars: int) -> List[str]:
     return chunks
 
 
-class GeminiTranslator:
+class GroqTranslator:
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+        self.endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
     def _post(self, payload: dict) -> requests.Response:
         return requests.post(
             self.endpoint,
-            params={"key": self.api_key},
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
             data=json.dumps(payload),
             timeout=60,
         )
@@ -476,8 +478,9 @@ class GeminiTranslator:
         )
 
         payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2},
+            "model": GROQ_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
         }
 
         resp = self._post(payload)
@@ -487,13 +490,11 @@ class GeminiTranslator:
         if 200 <= status < 300:
             try:
                 data = resp.json()
-                candidates = data.get("candidates") or []
-                if not candidates:
-                    return None, status, "empty_candidates", retry_after
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if not parts:
-                    return None, status, "empty_parts", retry_after
-                text = (parts[0].get("text", "") or "").strip()
+                choices = data.get("choices") or []
+                if not choices:
+                    return None, status, "empty_choices", retry_after
+                message = choices[0].get("message", {})
+                text = (message.get("content") or "").strip()
                 if not text:
                     return None, status, "empty_text", retry_after
                 return text, status, None, retry_after
@@ -518,7 +519,7 @@ def backoff_sleep_seconds(attempt_index: int) -> float:
     return delay + jitter
 
 
-def translate_long_html(translator: GeminiTranslator, html_str: str) -> Tuple[Optional[str], bool]:
+def translate_long_html(translator: GroqTranslator, html_str: str) -> Tuple[Optional[str], bool]:
     html_str = (html_str or "").strip()
     if not html_str:
         return "", True
@@ -581,7 +582,7 @@ def translate_long_html(translator: GeminiTranslator, html_str: str) -> Tuple[Op
     return result, True
 
 
-def translate_short_text(translator: GeminiTranslator, text: str) -> Tuple[Optional[str], bool]:
+def translate_short_text(translator: GroqTranslator, text: str) -> Tuple[Optional[str], bool]:
     text = (text or "").strip()
     if not text:
         return "", True
@@ -947,11 +948,11 @@ def main():
         maileroo_key = env_required("MAILEROO_API_KEY")
         mail_from = env_required("MAIL_FROM")
         mail_to_raw = env_required("MAIL_TO")
-        gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
         to_list = parse_mail_to(mail_to_raw)
         log.info("  MAIL_FROM=%s", mail_from)
         log.info("  MAIL_TO=%d recipient(s): %s", len(to_list), ", ".join(r["address"] for r in to_list))
-        log.info("  GEMINI_API_KEY=%s", "set (%d chars)" % len(gemini_key) if gemini_key else "NOT SET (translation disabled)")
+        log.info("  GROQ_API_KEY=%s", "set (%d chars)" % len(groq_key) if groq_key else "NOT SET (translation disabled)")
     except RuntimeError as e:
         log.error("  FAILED: %s", e)
         log.error("Aborting.")
@@ -987,8 +988,8 @@ def main():
     zh_creator = None
     zh_content_html = None
 
-    if article and gemini_key:
-        translator = GeminiTranslator(gemini_key)
+    if article and groq_key:
+        translator = GroqTranslator(groq_key)
         zh_creator = article.creator
 
         try:
@@ -1024,8 +1025,8 @@ def main():
             zh_content_html = None
     elif not article:
         log.info("  Skipped (no article)")
-    elif not gemini_key:
-        log.info("  Skipped (GEMINI_API_KEY not set)")
+    elif not groq_key:
+        log.info("  Skipped (GROQ_API_KEY not set)")
 
     # ── 5. 构建邮件 & 发送 ──────────────────────────────
     log.info("[5/6] Building & sending email...")
