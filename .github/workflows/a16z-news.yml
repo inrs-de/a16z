@@ -35,7 +35,7 @@ jobs:
 
       - name: Run script
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MAILEROO_API_KEY: ${{ secrets.MAILEROO_API_KEY }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
