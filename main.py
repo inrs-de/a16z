@@ -204,6 +204,9 @@ def remove_unwanted_nodes(soup: BeautifulSoup) -> None:
         t.decompose()
     bad_class_re = re.compile(r"(subscribe|subscription|recommend|promo|advert|sponsor|cta|paywall|banner|share)", re.I)
     for t in list(soup.find_all(True)):
+        # 防御性检查：跳过非 Tag 对象（如 NavigableString）或没有 attrs 的节点
+        if not isinstance(t, Tag):
+            continue
         cls = " ".join(t.get("class", []))
         tid = t.get("id", "") or ""
         if bad_class_re.search(cls) or bad_class_re.search(tid):
