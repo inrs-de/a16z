@@ -1,5 +1,11 @@
 [
   {
+    "title": "Investing in Ethos",
+    "creator": "Anish A",
+    "pubDate": "2026-05-06 23:03 UTC+8",
+    "link": "https://www.a16z.news/p/investing-in-ethos"
+  },
+  {
     "title": "System Integration as Software",
     "creator": "Kabir Nagrecha",
     "pubDate": "2026-05-06 02:40 UTC+8",
@@ -52,11 +58,5 @@
     "creator": "Erik Torenberg",
     "pubDate": "2026-04-21 22:04 UTC+8",
     "link": "https://www.a16z.news/p/the-internet-is-real-life"
-  },
-  {
-    "title": "Monitoring the Situation",
-    "creator": "Erik Torenberg",
-    "pubDate": "2026-04-20 23:10 UTC+8",
-    "link": "https://www.a16z.news/p/monitoring-the-situation"
   }
 ]
