@@ -1,5 +1,11 @@
 [
   {
+    "title": "From “System of Record” to “System of Intelligence”",
+    "creator": "Gio Ahern",
+    "pubDate": "2026-05-14 22:03 UTC+8",
+    "link": "https://www.a16z.news/p/from-system-of-record-to-system-of"
+  },
+  {
     "title": "Investing in Stitch",
     "creator": "Alex Rampell",
     "pubDate": "2026-05-14 14:01 UTC+8",
@@ -52,11 +58,5 @@
     "creator": "Alex Danco",
     "pubDate": "2026-04-29 22:02 UTC+8",
     "link": "https://www.a16z.news/p/call-the-plumber-weve-got-a-leaky"
-  },
-  {
-    "title": "Workday's Last Workday?",
-    "creator": "Joe Schmidt IV",
-    "pubDate": "2026-04-28 22:03 UTC+8",
-    "link": "https://www.a16z.news/p/workdays-last-workday"
   }
 ]
