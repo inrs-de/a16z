@@ -1,5 +1,11 @@
 [
   {
+    "title": "Charts of the Week: Memory to the Moon",
+    "creator": "a16z New Media",
+    "pubDate": "2026-05-15 22:01 UTC+8",
+    "link": "https://www.a16z.news/p/charts-of-the-week-memory-to-the"
+  },
+  {
     "title": "From “System of Record” to “System of Intelligence”",
     "creator": "Gio Ahern",
     "pubDate": "2026-05-14 22:03 UTC+8",
@@ -52,11 +58,5 @@
     "creator": "Erik Torenberg",
     "pubDate": "2026-04-30 22:02 UTC+8",
     "link": "https://www.a16z.news/p/introducing-the-a16z-design-engineer"
-  },
-  {
-    "title": "Call the Plumber; We’ve Got a Leaky Abstraction",
-    "creator": "Alex Danco",
-    "pubDate": "2026-04-29 22:02 UTC+8",
-    "link": "https://www.a16z.news/p/call-the-plumber-weve-got-a-leaky"
   }
 ]
