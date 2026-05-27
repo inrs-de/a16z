@@ -1,5 +1,11 @@
 [
   {
+    "title": "Everything, Everywhere is Compliance",
+    "creator": "James da Costa",
+    "pubDate": "2026-05-26 22:03 UTC+8",
+    "link": "https://www.a16z.news/p/everything-everywhere-is-compliance"
+  },
+  {
     "title": "Charts of the Week: Reflections from Sohn",
     "creator": "Moses Sternstein",
     "pubDate": "2026-05-22 22:02 UTC+8",
@@ -52,11 +58,5 @@
     "creator": "a16z New Media",
     "pubDate": "2026-05-08 22:03 UTC+8",
     "link": "https://www.a16z.news/p/charts-of-the-week-it-was-a-good"
-  },
-  {
-    "title": "How an AI Bill Becomes a Law",
-    "creator": "Ben Napier",
-    "pubDate": "2026-05-07 22:00 UTC+8",
-    "link": "https://www.a16z.news/p/how-an-ai-bill-becomes-a-law"
   }
 ]
