@@ -1,5 +1,11 @@
 [
   {
+    "title": "A Functional Taxonomy of World Models",
+    "creator": "Fei-Fei Li",
+    "pubDate": "2026-06-04 01:46 UTC+8",
+    "link": "https://www.a16z.news/p/a-functional-taxonomy-of-world-models"
+  },
+  {
     "title": "Introducing Special",
     "creator": "Nate Cavanaugh",
     "pubDate": "2026-06-02 23:50 UTC+8",
@@ -52,11 +58,5 @@
     "creator": "Will Bryk",
     "pubDate": "2026-05-20 23:03 UTC+8",
     "link": "https://www.a16z.news/p/exa-is-building-the-search-engine"
-  },
-  {
-    "title": "Need Series C? Call a16z",
-    "creator": "Alex Danco",
-    "pubDate": "2026-05-19 22:00 UTC+8",
-    "link": "https://www.a16z.news/p/need-series-c-call-a16z"
   }
 ]
