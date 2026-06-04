@@ -466,24 +466,60 @@ class GroqTranslator:
             timeout=60,
         )
 
+    @staticmethod
+    def _clean_output(text: str) -> str:
+        """Remove common LLM artifacts like markdown code blocks and explanatory prefixes."""
+        text = text.strip()
+
+        # Strip markdown code blocks
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+
+        # Strip common explanatory prefixes / artifacts
+        junk_patterns = [
+            r"(?i)^here\s+is\s+(?:the\s+)?(?:translated\s+html|translation|output):?\s*",
+            r"(?i)^translated\s+(?:html|content):?\s*",
+            r"(?i)^output:?\s*",
+            r"(?i)^is\s+not\s+provided[,:].*?(?:becomes|→)\s*",
+            r"(?i)^no[.,]?\s*i\s+made\s+a\s+mistake.*?\n",
+            r"(?i)^.*?becomes\s+",
+            r"(?i)^.*?real\s+translated\s+result:?\s*",
+        ]
+        for pat in junk_patterns:
+            text = re.sub(pat, "", text, count=1).strip()
+
+        return text
+
     def translate_html(self, html_chunk: str) -> Tuple[Optional[str], Optional[int], Optional[str], Optional[str]]:
-        prompt = (
-            "You are a professional translator.\n"
-            "Translate the following HTML from English to Simplified Chinese.\n"
-            "Rules:\n"
-            "1) Keep ALL HTML tags and structure unchanged.\n"
-            "2) Only translate human-readable text nodes.\n"
-            "3) Do NOT translate URLs.\n"
-            "4) Do NOT add any extra commentary.\n"
-            "5) Output ONLY the translated HTML.\n\n"
-            "HTML:\n"
-            f"{html_chunk}"
+        system_msg = (
+            "You are an expert HTML translator. Your sole task is to translate English text inside HTML into Simplified Chinese. "
+            "Follow these rules exactly and do not deviate:\n"
+            "1. Output ONLY the translated HTML code. Do not include markdown code blocks (no ```), explanations, notes, corrections, or any extra text.\n"
+            "2. Preserve ALL original HTML tags, attributes, and structure. Do not add <html>, <head>, or <body> tags if they were not present.\n"
+            "3. Only translate human-readable text content. Do not translate URLs, file paths, code snippets, or brand names.\n"
+            "4. Do not add, remove, or rearrange any HTML elements.\n"
+            "5. If the input contains no translatable text, return the original HTML exactly as-is.\n"
+            "6. Do not output multiple versions or self-corrections. Output the final translation only."
+        )
+
+        user_msg = (
+            f"<html_chunk>\n{html_chunk}\n</html_chunk>\n\n"
+            "Translate the content between <html_chunk> tags from English to Simplified Chinese. "
+            "Output ONLY the translated HTML."
         )
 
         payload = {
             "model": GROQ_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            "temperature": 0.1,
         }
 
         resp = self._post(payload)
@@ -500,6 +536,8 @@ class GroqTranslator:
                 text = (message.get("content") or "").strip()
                 if not text:
                     return None, status, "empty_text", retry_after
+                # 清洗模型可能添加的额外内容
+                text = self._clean_output(text)
                 return text, status, None, retry_after
             except Exception as ex:
                 return None, status, f"json_parse_error:{ex}", retry_after
@@ -595,6 +633,13 @@ def translate_short_text(translator: GroqTranslator, text: str) -> Tuple[Optiona
     translated_html, ok = translate_long_html(translator, wrapped)
     if not ok or translated_html is None:
         return None, False
+
+    # 如果模型没保留 <p> 而直接返回了纯文本，直接接受
+    stripped = translated_html.strip()
+    if not stripped.startswith("<"):
+        log.info("translate_short_text: result (plain) — %r", stripped[:80])
+        return stripped, True
+
     soup = BeautifulSoup(translated_html, "lxml")
     p = soup.find("p")
     result = (p.get_text(strip=True) if p else soup.get_text(" ", strip=True))
