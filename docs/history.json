@@ -1,5 +1,11 @@
 [
   {
+    "title": "A16Z's Global Mission",
+    "creator": "Ben Horowitz",
+    "pubDate": "2026-06-04 21:25 UTC+8",
+    "link": "https://www.a16z.news/p/a16zs-global-mission"
+  },
+  {
     "title": "A Functional Taxonomy of World Models",
     "creator": "Fei-Fei Li",
     "pubDate": "2026-06-04 01:46 UTC+8",
@@ -52,11 +58,5 @@
     "creator": "Michael McGuiness",
     "pubDate": "2026-05-21 22:01 UTC+8",
     "link": "https://www.a16z.news/p/flock-and-the-future-of-safety-in"
-  },
-  {
-    "title": "Exa is Building the Search Engine for the AI Era",
-    "creator": "Will Bryk",
-    "pubDate": "2026-05-20 23:03 UTC+8",
-    "link": "https://www.a16z.news/p/exa-is-building-the-search-engine"
   }
 ]
